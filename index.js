@@ -63,7 +63,7 @@ function updateStatus() {
     if (!client.user) return;
     const queueLen = queue.length + (currentSession ? 1 : 0);
     client.user.setActivity({
-        name: `${queueLen} players in queue | !coinflip`,
+        name: `${queueLen} players in queue | DonutSMP`,
         type: ActivityType.Watching
     });
 }
@@ -160,12 +160,33 @@ client.on('messageCreate', async (msg) => {
     if (msg.author.id === config.ownerId) {
         if (msg.content === '!startbot') { createMCBot(); return msg.reply('🚀 Bot starting...'); }
         if (msg.content === '!stopbot') { if (bot) { bot._manualStop = true; bot.quit(); isBotRunning = false; return msg.reply('🛑 Stopped.'); } }
+        
+        // Setup command to create the static button message
+        if (msg.content === '!setup') {
+            const setupEmbed = new EmbedBuilder()
+                .setTitle('🎰 DonutSMP Coinflip')
+                .setDescription('Click the button below to start a new coinflip session!\n\n**Rules:**\n- 50/50 Odds\n- 4% House Fee\n- 1-10 Rounds')
+                .setColor('#5865F2');
+            
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('start_cf_queue')
+                    .setLabel('Start Coinflip')
+                    .setEmoji('🎲')
+                    .setStyle(ButtonStyle.Primary)
+            );
+            
+            await msg.channel.send({ embeds: [setupEmbed], components: [row] });
+            await msg.delete().catch(() => {});
+            return;
+        }
     }
 
+    // Keep !coinflip as a backup, but with ephemeral reply
     if (msg.content === '!coinflip') {
-        if (!isBotRunning) return msg.reply('❌ Bot is offline.');
+        if (!isBotRunning) return msg.reply({ content: '❌ Bot is offline.', ephemeral: true });
         queue.push({ userId: msg.author.id, userName: msg.author.username, channelId: msg.channel.id, status: 'ASK_NAME' });
-        msg.reply('✅ Added to queue! Check your private thread.');
+        msg.reply({ content: '✅ Added to queue! Check your private thread.', ephemeral: true });
         processQueue();
     }
 
@@ -215,6 +236,26 @@ async function showConfirmation(thread, rounds) {
 }
 
 client.on('interactionCreate', async (int) => {
+    // Handle the static "Start Coinflip" button
+    if (int.isButton() && int.customId === 'start_cf_queue') {
+        if (!isBotRunning) return int.reply({ content: '❌ Bot is offline.', ephemeral: true });
+        
+        // Check if user is already in queue or current session
+        const alreadyInQueue = queue.some(q => q.userId === int.user.id) || (currentSession && currentSession.userId === int.user.id);
+        if (alreadyInQueue) return int.reply({ content: '❌ You are already in the queue!', ephemeral: true });
+
+        queue.push({ 
+            userId: int.user.id, 
+            userName: int.user.username, 
+            channelId: int.channel.id, 
+            status: 'ASK_NAME' 
+        });
+        
+        await int.reply({ content: '✅ Added to queue! Check your private thread.', ephemeral: true });
+        processQueue();
+        return;
+    }
+
     if (!int.isButton() || !currentSession || int.user.id !== currentSession.userId) return;
     const thread = int.channel;
 
@@ -251,10 +292,9 @@ client.on('interactionCreate', async (int) => {
         if (totalWon > 0) {
             const finalWin = Math.floor(totalWon);
             bot.chat(`/pay ${currentSession.mcName} ${finalWin}`);
-            // Csak a legszükségesebb üzenetet küldjük a szerverre
             bot.chat(`[CF] ${currentSession.mcName} won $${finalWin.toLocaleString()}!`);
         } else {
-            bot.chat(`[CF] ${currentSession.mcName} lost. Try again with !coinflip!`);
+            bot.chat(`[CF] ${currentSession.mcName} lost. Try again!`);
         }
 
         currentSession.finalProfit = Math.floor(totalWon) - currentSession.receivedAmount;
@@ -299,5 +339,5 @@ async function endSession(thread) {
     }, 5000);
 }
 
-client.on('clientReady', () => { createMCBot(); updateStatus(); });
+client.on('ready', () => { createMCBot(); updateStatus(); });
 client.login(config.token);

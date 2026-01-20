@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, ChannelType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ActivityType } = require('discord.js');
+const { Client, GatewayIntentBits, ChannelType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ActivityType, PermissionsBitField } = require('discord.js');
 const mineflayer = require('mineflayer');
 const express = require('express');
 const axios = require('axios');
@@ -25,7 +25,7 @@ if (process.env.RENDER_EXTERNAL_URL) {
 
 const config = {
     ownerId: process.env.OWNER_ID || 'YOUR_DISCORD_ID', 
-    logChannelId: process.env.LOG_CHANNEL_ID || 'YOUR_LOG_CHANNEL_ID', // ÚJ: Ide küldi a bot az értesítést a szálakról
+    logChannelId: process.env.LOG_CHANNEL_ID || 'YOUR_LOG_CHANNEL_ID', 
     mcHost: process.env.MC_HOST || 'donutsmall.net',
     mcUsername: process.env.MC_USERNAME || 'BotEmail@example.com',
     token: process.env.DISCORD_TOKEN || 'YOUR_DISCORD_TOKEN', 
@@ -49,6 +49,7 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers,
     ]
 });
 
@@ -140,9 +141,12 @@ async function processQueue() {
     
     try {
         const channel = await client.channels.fetch(sessionData.channelId);
+        
+        // Szál létrehozása
         const thread = await channel.threads.create({
             name: `cf-${sessionData.userName}`,
-            type: ChannelType.PrivateThread
+            type: ChannelType.PrivateThread,
+            autoArchiveDuration: 60
         });
 
         const session = {
@@ -153,15 +157,20 @@ async function processQueue() {
         };
 
         activeSessions.set(thread.id, session);
+        
+        // Felhasználó hozzáadása és kényszerített jogosultság frissítés (ha szükséges)
         await thread.members.add(session.userId);
 
         const welcome = await thread.send({ 
             content: `<@${session.userId}>`, 
-            embeds: [new EmbedBuilder().setTitle('🎰 Coinflip Session').setDescription('Hello! Please type your exact Minecraft username!').setColor('#5865F2')] 
+            embeds: [new EmbedBuilder()
+                .setTitle('🎰 Coinflip Session')
+                .setDescription('Hello! Please type your exact Minecraft username!\n\n*If you cannot type here, make sure you have "Send Messages in Threads" permission.*')
+                .setColor('#5865F2')] 
         });
         session.messagesToDelete.push(welcome);
         
-        // ÚJ: Értesítés küldése az ownernek a log csatornába
+        // Értesítés küldése az ownernek
         try {
             const logChannel = await client.channels.fetch(config.logChannelId);
             if (logChannel) {
@@ -206,6 +215,7 @@ client.on('messageCreate', async (msg) => {
         }
     }
 
+    // Itt kezeljük a szálban érkező üzeneteket
     const session = activeSessions.get(msg.channel.id);
     if (session && msg.author.id === session.userId) {
         session.messagesToDelete.push(msg);

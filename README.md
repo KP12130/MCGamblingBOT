@@ -59,29 +59,37 @@ Supports common Minecraft money formats:
 
 ### 2️⃣ Installation
 
-Clone the repository and install dependencies:
+# Clone the repository and install dependencies:
 
-git clone https://github.com/yourusername/donutsmp-gambling-bot.git
-cd donutsmp-gambling-bot
-npm install
-3️⃣ Environment Variables
-Configure the following environment variables
-(e.g. Render.com → Environment Settings):
+- git clone [https://github.com/KP12130/MCGamblingBOT]
+- cd donutsmp-gambling-bot
+- npm install
 
-Key	Description
+---
+
+## 3️⃣ Environment Variables
+- Configure the following environment variables
+- (e.g. Render.com → Environment Settings):
+
+## Key	Description
 - DISCORD_TOKEN	Your Discord bot token
 - OWNER_ID	Your Discord user ID
 - MC_USERNAME	Microsoft account email
 - MC_HOST	Minecraft server address (default: donutsmall.net)
 - RENDER_EXTERNAL_URL	Render app URL (used for self-pinging)
+
+---
+
 ###🎮 Commands
 ##👑 Admin Commands (Discord)
 #Command	Description
 - !startbot	Connects the bot to the Minecraft server
 - !stopbot	Safely disconnects and disables auto-reconnect
+
 ##👤 User Commands (Discord)
 #Command	Description
 - !coinflip	Starts a new coinflip session in a private thread
+
 ##⚙️ Configuration
 ## You can customize the bot behavior inside index.js:
 ```
@@ -91,6 +99,8 @@ Key	Description
    broadcastMessage: "🎰 Coinflip open! Type !coinflip on Discord to play!"
  };
 ```
+---
+
 ## ⚠️ Important Notice
 - This project is for educational purposes only.
 - Always comply with DonutSMP rules regarding:

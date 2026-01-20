@@ -62,7 +62,7 @@ Supports common Minecraft money formats:
 # Clone the repository and install dependencies:
 
 - git clone [https://github.com/KP12130/MCGamblingBOT]
-- cd donutsmp-gambling-bot
+- cd MCGamblingBOT
 - npm install
 
 ---
@@ -111,7 +111,7 @@ Supports common Minecraft money formats:
 
 - AFK behavior
 
-You are responsible for how you deploy and use this software.
+<span style="color:red"><strong>You are responsible for how you deploy and use this software.</strong></span>
 
 ## ❤️ Credits
 - Built with passion for the DonutSMP community.

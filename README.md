@@ -83,7 +83,7 @@ Key	Description
 #Command	Description
 - !coinflip	Starts a new coinflip session in a private thread
 ##⚙️ Configuration
-- You can customize the bot behavior inside index.js:
+## You can customize the bot behavior inside index.js:
 ```
  const config = {
    houseEdge: 4, // House commission percentage

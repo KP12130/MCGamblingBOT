@@ -84,24 +84,25 @@ Key	Description
 - !coinflip	Starts a new coinflip session in a private thread
 ##⚙️ Configuration
 - You can customize the bot behavior inside index.js:
-
-- const config = {
-  - houseEdge: 4, // House commission percentage
-  - broadcastInterval: 5 * 60 * 1000, // 5 minutes
-  - broadcastMessage: "🎰 Coinflip open! Type !coinflip on Discord to play!"
-- };
+```
+ const config = {
+   houseEdge: 4, // House commission percentage
+   broadcastInterval: 5 * 60 * 1000, // 5 minutes
+   broadcastMessage: "🎰 Coinflip open! Type !coinflip on Discord to play!"
+ };
+```
 ## ⚠️ Important Notice
 - This project is for educational purposes only.
 - Always comply with DonutSMP rules regarding:
 
-#- Automated bots
+# - Automated bots
 
-#- Gambling mechanics
+# - Gambling mechanics
 
-#- AFK behavior
+# - AFK behavior
 
 You are responsible for how you deploy and use this software.
 
-##❤️ Credits
+## ❤️ Credits
 - Built with passion for the DonutSMP community.
 - Designed for stability, automation, and clean integration.

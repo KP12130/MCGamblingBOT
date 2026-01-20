@@ -111,7 +111,7 @@ Supports common Minecraft money formats:
 
 - AFK behavior
 
-<span style="color:red"><strong>You are responsible for how you deploy and use this software.</strong></span>
+## You are responsible for how you deploy and use this software!!! ##
 
 ## ❤️ Credits
 - Built with passion for the DonutSMP community.

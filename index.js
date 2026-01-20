@@ -26,7 +26,7 @@ if (process.env.RENDER_EXTERNAL_URL) {
 
 const config = {
     ownerId: process.env.OWNER_ID || 'YOUR_DISCORD_ID', 
-    mcHost: process.env.MC_HOST || 'donutsmp.net',
+    mcHost: process.env.MC_HOST || 'donutsmall.net',
     mcUsername: process.env.MC_USERNAME || 'BotEmail@example.com',
     token: process.env.DISCORD_TOKEN || 'YOUR_DISCORD_TOKEN', 
     houseEdge: 0.04,
@@ -94,7 +94,15 @@ function createMCBot() {
 
     bot.on('spawn', () => {
         console.log('[SUCCESS] Bot spawned in world.');
+        isBotRunning = true;
         
+        // Frissítsük az egyenleget a belépés után biztonságosan
+        setTimeout(() => {
+            if (bot && bot._client && typeof bot.chat === 'function') {
+                bot.chat('/bal');
+            }
+        }, 5000);
+
         // Anti-AFK Jumping
         const afkInterval = setInterval(() => {
             if (bot && bot.entity) {
@@ -105,22 +113,19 @@ function createMCBot() {
             }
         }, 30000);
 
-        // Auto Broadcast in AFK zone
+        // Auto Broadcast
         if (config.broadcastEnabled) {
             broadcastTimer = setInterval(() => {
-                if (isBotRunning && bot) {
+                if (isBotRunning && bot && bot._client) {
                     bot.chat(config.broadcastMessage);
-                    console.log('[DEBUG] Broadcast message sent to chat.');
                 }
             }, config.broadcastInterval);
         }
     });
 
     bot.on('login', () => {
-        isBotRunning = true;
         clearTimeout(reconnectTimeout);
         console.log('[SUCCESS] Minecraft Bot logged in!');
-        setTimeout(() => bot.chat('/bal'), 5000);
     });
 
     bot.on('messagestr', (message) => {
@@ -129,7 +134,6 @@ function createMCBot() {
 
         console.log(`[MC-RAW] ${cleanMessage}`);
 
-        // Balance check
         if (cleanMessage.toLowerCase().includes('balance') || cleanMessage.includes('$')) {
             const balMatch = cleanMessage.match(/\$([0-9.,]+[KMBkmb]?)/);
             if (balMatch) {
@@ -138,7 +142,6 @@ function createMCBot() {
             }
         }
 
-        // Payment detection
         if (currentSession && currentSession.status === 'WAITING_PAYMENT') {
             const msgLower = cleanMessage.toLowerCase();
             const playerLower = currentSession.mcName.toLowerCase();
@@ -150,7 +153,6 @@ function createMCBot() {
                     const amount = parseMcAmount(rawAmount);
                     
                     if (!isNaN(amount) && amount > 0) {
-                        console.log(`[PAYMENT] Confirmed $${amount} from ${currentSession.mcName}`);
                         currentSession.receivedAmount = amount;
                         processPayment();
                     }
@@ -165,7 +167,6 @@ function createMCBot() {
         if (broadcastTimer) clearInterval(broadcastTimer);
         console.log('[DEBUG] MC Bot connection ended.');
         if (!reconnectTimeout && !bot._manualStop) {
-            console.log('[DEBUG] Reconnecting in 10s...');
             reconnectTimeout = setTimeout(createMCBot, 10000);
         }
     });

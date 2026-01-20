@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, ChannelType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, ChannelType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ActivityType } = require('discord.js');
 const mineflayer = require('mineflayer');
 const express = require('express');
 const axios = require('axios');
@@ -31,10 +31,10 @@ const config = {
     token: process.env.DISCORD_TOKEN || 'YOUR_DISCORD_TOKEN', 
     houseEdge: 0.04,
     targetServer: null,
-    // --- AFK ZONE BROADCAST SETTINGS ---
+    // --- ADVERTISING SETTINGS ---
     broadcastEnabled: true,
-    broadcastInterval: 300000, // 5 minutes
-    broadcastMessage: "🎰 Coinflip is ACTIVE! Want to double your money? Type !coinflip on our Discord!"
+    broadcastInterval: 180000, // 3 minutes
+    broadcastMessage: "🎰 [COINFLIP] Double your money! 50/50 odds, only 4% fee! Type !coinflip on our Discord! 🎲"
 };
 
 // --- LOG FILTERING ---
@@ -61,6 +61,16 @@ let queue = [];
 let currentSession = null;
 let reconnectTimeout;
 let broadcastTimer;
+
+// --- UPDATE DISCORD STATUS ---
+function updateStatus() {
+    if (!client.user) return;
+    const queueLen = queue.length + (currentSession ? 1 : 0);
+    client.user.setActivity({
+        name: `${queueLen} players in queue | !coinflip`,
+        type: ActivityType.Watching
+    });
+}
 
 // --- AMOUNT PARSER (K, M, B) ---
 function parseMcAmount(str) {
@@ -95,15 +105,14 @@ function createMCBot() {
     bot.on('spawn', () => {
         console.log('[SUCCESS] Bot spawned in world.');
         isBotRunning = true;
+        updateStatus();
         
-        // Frissítsük az egyenleget a belépés után biztonságosan
         setTimeout(() => {
             if (bot && bot._client && typeof bot.chat === 'function') {
                 bot.chat('/bal');
             }
         }, 5000);
 
-        // Anti-AFK Jumping
         const afkInterval = setInterval(() => {
             if (bot && bot.entity) {
                 bot.setControlState('jump', true);
@@ -113,7 +122,6 @@ function createMCBot() {
             }
         }, 30000);
 
-        // Auto Broadcast
         if (config.broadcastEnabled) {
             broadcastTimer = setInterval(() => {
                 if (isBotRunning && bot && bot._client) {
@@ -174,6 +182,7 @@ function createMCBot() {
 
 // --- QUEUE HANDLING ---
 async function processQueue() {
+    updateStatus();
     if (currentSession || queue.length === 0) return;
     currentSession = queue.shift();
 
@@ -208,7 +217,7 @@ client.on('messageCreate', async (msg) => {
                 bot._manualStop = true;
                 bot.quit();
                 isBotRunning = false;
-                return msg.reply('🛑 Bot stopped manually.');
+                return msg.reply('🛑 Bot stopped.');
             }
         }
     }
@@ -216,7 +225,7 @@ client.on('messageCreate', async (msg) => {
     if (msg.content === '!coinflip') {
         if (!isBotRunning) return msg.reply('❌ The bot is currently offline.');
         queue.push({ userId: msg.author.id, userName: msg.author.username, channelId: msg.channel.id, status: 'ASK_NAME' });
-        msg.reply('✅ You are in queue!');
+        msg.reply('✅ You are in queue! Check the private thread created for you.');
         processQueue();
     }
 
@@ -226,7 +235,7 @@ client.on('messageCreate', async (msg) => {
         if (currentSession.status === 'ASK_NAME') {
             currentSession.mcName = msg.content.trim();
             currentSession.status = 'WAITING_PAYMENT';
-            msg.reply({ embeds: [new EmbedBuilder().setTitle('Payment').setDescription(`Please pay the bot in-game:\n\`/pay ${bot.username} <amount>\`\n\nName: **${currentSession.mcName}**`).setColor('#FEE75C')] });
+            msg.reply({ embeds: [new EmbedBuilder().setTitle('Payment').setDescription(`Please pay the bot in-game:\n\`/pay ${bot.username} <amount>\`\n\nIGN: **${currentSession.mcName}**`).setColor('#FEE75C')] });
         } 
         else if (currentSession.status === 'ASK_ROUNDS') {
             const rounds = parseInt(msg.content);
@@ -251,9 +260,6 @@ async function showConfirmation(thread, rounds) {
     currentSession.rounds = rounds;
     currentSession.refund = refund;
 
-    const maxWinPerRound = (perGame * 2) * (1 - config.houseEdge);
-    const totalMaxRisk = maxWinPerRound * rounds;
-    
     bot.chat('/bal');
 
     const embed = new EmbedBuilder()
@@ -277,7 +283,7 @@ client.on('interactionCreate', async (int) => {
 
     if (int.customId === 'cancel_start') {
         bot.chat(`/pay ${currentSession.mcName} ${currentSession.receivedAmount}`);
-        await int.update({ content: 'Payment refunded.', components: [] });
+        await int.update({ content: 'Funds refunded.', components: [] });
         return endSession(thread);
     }
 
@@ -301,15 +307,23 @@ client.on('interactionCreate', async (int) => {
             if (win) {
                 const winAmt = (currentSession.perGame * 2) * (1 - config.houseEdge);
                 totalWon += winAmt;
-                res.setDescription('✨ **WINNER!**').setColor('#57F287');
+                res.setDescription('✨ **YOU WON!**').setColor('#57F287');
             } else {
-                res.setDescription('💀 **LOST.**').setColor('#ED4245');
+                res.setDescription('💀 **YOU LOST.**').setColor('#ED4245');
             }
             await thread.send({ embeds: [res] });
             await new Promise(r => setTimeout(r, 1500));
         }
 
-        if (totalWon > 0) bot.chat(`/pay ${currentSession.mcName} ${Math.floor(totalWon)}`);
+        if (totalWon > 0) {
+            const finalWin = Math.floor(totalWon);
+            bot.chat(`/pay ${currentSession.mcName} ${finalWin}`);
+            // PUBLIC PROOF IN CHAT:
+            bot.chat(`🎰 [CF] ${currentSession.mcName} won $${finalWin.toLocaleString()} against the bot! Congrats!`);
+        } else {
+            bot.chat(`🎰 [CF] ${currentSession.mcName} wasn't lucky this time. Try your luck with !coinflip!`);
+        }
+        
         await thread.send(totalWon > 0 ? `🏆 Winnings sent: **$${Math.floor(totalWon).toLocaleString()}**` : '💀 Better luck next time!');
         endSession(thread);
     }
@@ -319,9 +333,13 @@ async function endSession(thread) {
     setTimeout(async () => {
         try { await thread.delete(); } catch(e) {}
         currentSession = null;
+        updateStatus();
         processQueue();
     }, 10000);
 }
 
-client.on('clientReady', () => console.log(`[SUCCESS] Discord Bot: ${client.user.tag}`));
+client.on('clientReady', () => {
+    console.log(`[SUCCESS] Discord Bot: ${client.user.tag}`);
+    updateStatus();
+});
 client.login(config.token);

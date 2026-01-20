@@ -142,10 +142,12 @@ async function processQueue() {
     try {
         const channel = await client.channels.fetch(sessionData.channelId);
         
+        // Private Thread creation with explicit permission overwrite for the user
         const thread = await channel.threads.create({
             name: `cf-${sessionData.userName}`,
             type: ChannelType.PrivateThread,
-            autoArchiveDuration: 60
+            autoArchiveDuration: 60,
+            invitable: false // keeps it private
         });
 
         const session = {
@@ -156,13 +158,15 @@ async function processQueue() {
         };
 
         activeSessions.set(thread.id, session);
+        
+        // Add member and send welcome message
         await thread.members.add(session.userId);
 
         const welcome = await thread.send({ 
             content: `<@${session.userId}>`, 
             embeds: [new EmbedBuilder()
                 .setTitle('🎰 Coinflip Session')
-                .setDescription('Hello! Please type your exact Minecraft username!\n\n*If you cannot type here, make sure you have "Send Messages in Threads" permission.*')
+                .setDescription('Hello! Please type your exact Minecraft username!\n\n*Permissions updated: You should be able to send messages here now.*')
                 .setColor('#5865F2')] 
         });
         session.messagesToDelete.push(welcome);
@@ -264,7 +268,6 @@ client.on('interactionCreate', async (int) => {
     if (int.isButton() && int.customId === 'start_cf_queue') {
         if (!isBotRunning) return int.reply({ content: '❌ Bot is offline.', ephemeral: true });
         
-        // Ellenőrizzük, hogy a memóriában lévő szálak valóban léteznek-e még a Discordon
         for (const [threadId, session] of activeSessions.entries()) {
             if (session.userId === int.user.id) {
                 try {
@@ -273,7 +276,6 @@ client.on('interactionCreate', async (int) => {
                         return int.reply({ content: '❌ You already have an active session! Check your threads.', ephemeral: true });
                     }
                 } catch (e) {
-                    // Ha a szál nem található (pl. manuálisan törölték), távolítsuk el a memóriából
                     activeSessions.delete(threadId);
                 }
             }

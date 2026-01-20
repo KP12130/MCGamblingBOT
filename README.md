@@ -95,11 +95,11 @@ Key	Description
 - This project is for educational purposes only.
 - Always comply with DonutSMP rules regarding:
 
-# - Automated bots
+- Automated bots
 
-# - Gambling mechanics
+- Gambling mechanics
 
-# - AFK behavior
+- AFK behavior
 
 You are responsible for how you deploy and use this software.
 

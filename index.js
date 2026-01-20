@@ -142,7 +142,6 @@ async function processQueue() {
     try {
         const channel = await client.channels.fetch(sessionData.channelId);
         
-        // Szál létrehozása
         const thread = await channel.threads.create({
             name: `cf-${sessionData.userName}`,
             type: ChannelType.PrivateThread,
@@ -157,8 +156,6 @@ async function processQueue() {
         };
 
         activeSessions.set(thread.id, session);
-        
-        // Felhasználó hozzáadása és kényszerített jogosultság frissítés (ha szükséges)
         await thread.members.add(session.userId);
 
         const welcome = await thread.send({ 
@@ -170,7 +167,6 @@ async function processQueue() {
         });
         session.messagesToDelete.push(welcome);
         
-        // Értesítés küldése az ownernek
         try {
             const logChannel = await client.channels.fetch(config.logChannelId);
             if (logChannel) {
@@ -215,7 +211,6 @@ client.on('messageCreate', async (msg) => {
         }
     }
 
-    // Itt kezeljük a szálban érkező üzeneteket
     const session = activeSessions.get(msg.channel.id);
     if (session && msg.author.id === session.userId) {
         session.messagesToDelete.push(msg);
@@ -269,8 +264,23 @@ client.on('interactionCreate', async (int) => {
     if (int.isButton() && int.customId === 'start_cf_queue') {
         if (!isBotRunning) return int.reply({ content: '❌ Bot is offline.', ephemeral: true });
         
-        const alreadyActive = Array.from(activeSessions.values()).some(s => s.userId === int.user.id) || queue.some(q => q.userId === int.user.id);
-        if (alreadyActive) return int.reply({ content: '❌ You already have an active session or are in queue!', ephemeral: true });
+        // Ellenőrizzük, hogy a memóriában lévő szálak valóban léteznek-e még a Discordon
+        for (const [threadId, session] of activeSessions.entries()) {
+            if (session.userId === int.user.id) {
+                try {
+                    const existingThread = await client.channels.fetch(threadId);
+                    if (existingThread) {
+                        return int.reply({ content: '❌ You already have an active session! Check your threads.', ephemeral: true });
+                    }
+                } catch (e) {
+                    // Ha a szál nem található (pl. manuálisan törölték), távolítsuk el a memóriából
+                    activeSessions.delete(threadId);
+                }
+            }
+        }
+
+        const inQueue = queue.some(q => q.userId === int.user.id);
+        if (inQueue) return int.reply({ content: '❌ You are already in the queue!', ephemeral: true });
 
         queue.push({ 
             userId: int.user.id, 
@@ -366,7 +376,7 @@ async function endSession(threadId) {
     setTimeout(async () => {
         try { 
             const thread = await client.channels.fetch(threadId);
-            await thread.delete(); 
+            if (thread) await thread.delete(); 
         } catch(e) {}
         activeSessions.delete(threadId);
         updateStatus();

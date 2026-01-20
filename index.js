@@ -25,6 +25,7 @@ if (process.env.RENDER_EXTERNAL_URL) {
 
 const config = {
     ownerId: process.env.OWNER_ID || 'YOUR_DISCORD_ID', 
+    logChannelId: process.env.LOG_CHANNEL_ID || 'YOUR_LOG_CHANNEL_ID', // ÚJ: Ide küldi a bot az értesítést a szálakról
     mcHost: process.env.MC_HOST || 'donutsmall.net',
     mcUsername: process.env.MC_USERNAME || 'BotEmail@example.com',
     token: process.env.DISCORD_TOKEN || 'YOUR_DISCORD_TOKEN', 
@@ -55,15 +56,15 @@ let bot;
 let botBalance = 0;
 let isBotRunning = false;
 let queue = [];
-let currentSession = null;
+const activeSessions = new Map();
 let reconnectTimeout;
 let broadcastTimer;
 
 function updateStatus() {
     if (!client.user) return;
-    const queueLen = queue.length + (currentSession ? 1 : 0);
+    const activeCount = activeSessions.size + queue.length;
     client.user.setActivity({
-        name: `${queueLen} players in queue | DonutSMP`,
+        name: `${activeCount} players active | DonutSMP`,
         type: ActivityType.Watching
     });
 }
@@ -109,14 +110,17 @@ function createMCBot() {
             const balMatch = cleanMessage.match(/\$([0-9.,]+[KMBkmb]?)/);
             if (balMatch) botBalance = parseMcAmount(balMatch[1]);
         }
-        if (currentSession?.status === 'WAITING_PAYMENT') {
-            const msgLower = cleanMessage.toLowerCase();
-            const playerLower = currentSession.mcName.toLowerCase();
-            if (msgLower.includes(playerLower) && (msgLower.includes('paid you') || msgLower.includes('received'))) {
-                const amountMatch = cleanMessage.match(/\$([0-9.,]+[KMBkmb]?)/);
-                if (amountMatch) {
-                    currentSession.receivedAmount = parseMcAmount(amountMatch[1]);
-                    processPayment();
+        
+        for (const [threadId, session] of activeSessions.entries()) {
+            if (session.status === 'WAITING_PAYMENT') {
+                const msgLower = cleanMessage.toLowerCase();
+                const playerLower = session.mcName.toLowerCase();
+                if (msgLower.includes(playerLower) && (msgLower.includes('paid you') || msgLower.includes('received'))) {
+                    const amountMatch = cleanMessage.match(/\$([0-9.,]+[KMBkmb]?)/);
+                    if (amountMatch) {
+                        session.receivedAmount = parseMcAmount(amountMatch[1]);
+                        processPayment(threadId);
+                    }
                 }
             }
         }
@@ -130,26 +134,47 @@ function createMCBot() {
 
 async function processQueue() {
     updateStatus();
-    if (currentSession || queue.length === 0) return;
-    currentSession = queue.shift();
-    currentSession.messagesToDelete = [];
-
+    if (queue.length === 0) return;
+    
+    const sessionData = queue.shift();
+    
     try {
-        const channel = await client.channels.fetch(currentSession.channelId);
+        const channel = await client.channels.fetch(sessionData.channelId);
         const thread = await channel.threads.create({
-            name: `coinflip-${currentSession.userName}`,
+            name: `cf-${sessionData.userName}`,
             type: ChannelType.PrivateThread
         });
-        currentSession.threadId = thread.id;
-        await thread.members.add(currentSession.userId);
+
+        const session = {
+            ...sessionData,
+            threadId: thread.id,
+            messagesToDelete: [],
+            status: 'ASK_NAME'
+        };
+
+        activeSessions.set(thread.id, session);
+        await thread.members.add(session.userId);
 
         const welcome = await thread.send({ 
-            content: `<@${currentSession.userId}>`, 
+            content: `<@${session.userId}>`, 
             embeds: [new EmbedBuilder().setTitle('🎰 Coinflip Session').setDescription('Hello! Please type your exact Minecraft username!').setColor('#5865F2')] 
         });
-        currentSession.messagesToDelete.push(welcome);
+        session.messagesToDelete.push(welcome);
+        
+        // ÚJ: Értesítés küldése az ownernek a log csatornába
+        try {
+            const logChannel = await client.channels.fetch(config.logChannelId);
+            if (logChannel) {
+                await logChannel.send({
+                    content: `🔔 **New Coinflip Started!**\nUser: <@${session.userId}> (${session.userName})\nThread: <#${thread.id}>`
+                });
+            }
+        } catch (logErr) {
+            console.error('[ERROR] Could not send log to logChannel:', logErr.message);
+        }
+        
     } catch (e) {
-        currentSession = null;
+        console.error(e);
         processQueue();
     }
 }
@@ -161,7 +186,6 @@ client.on('messageCreate', async (msg) => {
         if (msg.content === '!startbot') { createMCBot(); return msg.reply('🚀 Bot starting...'); }
         if (msg.content === '!stopbot') { if (bot) { bot._manualStop = true; bot.quit(); isBotRunning = false; return msg.reply('🛑 Stopped.'); } }
         
-        // Setup command to create the static button message
         if (msg.content === '!setup') {
             const setupEmbed = new EmbedBuilder()
                 .setTitle('🎰 DonutSMP Coinflip')
@@ -182,25 +206,17 @@ client.on('messageCreate', async (msg) => {
         }
     }
 
-    // Keep !coinflip as a backup, but with ephemeral reply
-    if (msg.content === '!coinflip') {
-        if (!isBotRunning) return msg.reply({ content: '❌ Bot is offline.', ephemeral: true });
-        queue.push({ userId: msg.author.id, userName: msg.author.username, channelId: msg.channel.id, status: 'ASK_NAME' });
-        msg.reply({ content: '✅ Added to queue! Check your private thread.', ephemeral: true });
-        processQueue();
-    }
+    const session = activeSessions.get(msg.channel.id);
+    if (session && msg.author.id === session.userId) {
+        session.messagesToDelete.push(msg);
 
-    if (msg.channel.isThread() && currentSession?.threadId === msg.channel.id) {
-        if (msg.author.id !== currentSession.userId) return;
-        currentSession.messagesToDelete.push(msg);
-
-        if (currentSession.status === 'ASK_NAME') {
-            currentSession.mcName = msg.content.trim();
-            currentSession.status = 'WAITING_PAYMENT';
-            const m = await msg.reply({ embeds: [new EmbedBuilder().setTitle('Payment').setDescription(`Pay the bot in-game: \`/pay ${bot.username} <amount>\`\nIGN: **${currentSession.mcName}**`).setColor('#FEE75C')] });
-            currentSession.messagesToDelete.push(m);
+        if (session.status === 'ASK_NAME') {
+            session.mcName = msg.content.trim();
+            session.status = 'WAITING_PAYMENT';
+            const m = await msg.reply({ embeds: [new EmbedBuilder().setTitle('Payment').setDescription(`Pay the bot in-game: \`/pay ${bot.username} <amount>\`\nIGN: **${session.mcName}**`).setColor('#FEE75C')] });
+            session.messagesToDelete.push(m);
         } 
-        else if (currentSession.status === 'ASK_ROUNDS') {
+        else if (session.status === 'ASK_ROUNDS') {
             const rounds = parseInt(msg.content);
             if (isNaN(rounds) || rounds < 1 || rounds > 10) return msg.reply('1-10 rounds please!');
             showConfirmation(msg.channel, rounds);
@@ -208,18 +224,22 @@ client.on('messageCreate', async (msg) => {
     }
 });
 
-async function processPayment() {
-    const thread = await client.channels.fetch(currentSession.threadId);
-    currentSession.status = 'ASK_ROUNDS';
-    const m = await thread.send({ embeds: [new EmbedBuilder().setTitle('💰 Received!').setDescription(`Amount: **$${currentSession.receivedAmount.toLocaleString()}**\nHow many rounds? (1-10)`).setColor('#57F287')] });
-    currentSession.messagesToDelete.push(m);
+async function processPayment(threadId) {
+    const session = activeSessions.get(threadId);
+    if (!session) return;
+    const thread = await client.channels.fetch(threadId);
+    session.status = 'ASK_ROUNDS';
+    const m = await thread.send({ embeds: [new EmbedBuilder().setTitle('💰 Received!').setDescription(`Amount: **$${session.receivedAmount.toLocaleString()}**\nHow many rounds? (1-10)`).setColor('#57F287')] });
+    session.messagesToDelete.push(m);
 }
 
 async function showConfirmation(thread, rounds) {
-    let perGame = Math.floor(currentSession.receivedAmount / rounds);
-    currentSession.perGame = perGame;
-    currentSession.rounds = rounds;
-    currentSession.refund = currentSession.receivedAmount - (perGame * rounds);
+    const session = activeSessions.get(thread.id);
+    if (!session) return;
+    let perGame = Math.floor(session.receivedAmount / rounds);
+    session.perGame = perGame;
+    session.rounds = rounds;
+    session.refund = session.receivedAmount - (perGame * rounds);
     bot.chat('/bal');
 
     const embed = new EmbedBuilder().setTitle('📊 Game Details').addFields(
@@ -232,23 +252,20 @@ async function showConfirmation(thread, rounds) {
         new ButtonBuilder().setCustomId('cancel_start').setLabel('Refund').setStyle(ButtonStyle.Danger)
     );
     const m = await thread.send({ embeds: [embed], components: [row] });
-    currentSession.messagesToDelete.push(m);
+    session.messagesToDelete.push(m);
 }
 
 client.on('interactionCreate', async (int) => {
-    // Handle the static "Start Coinflip" button
     if (int.isButton() && int.customId === 'start_cf_queue') {
         if (!isBotRunning) return int.reply({ content: '❌ Bot is offline.', ephemeral: true });
         
-        // Check if user is already in queue or current session
-        const alreadyInQueue = queue.some(q => q.userId === int.user.id) || (currentSession && currentSession.userId === int.user.id);
-        if (alreadyInQueue) return int.reply({ content: '❌ You are already in the queue!', ephemeral: true });
+        const alreadyActive = Array.from(activeSessions.values()).some(s => s.userId === int.user.id) || queue.some(q => q.userId === int.user.id);
+        if (alreadyActive) return int.reply({ content: '❌ You already have an active session or are in queue!', ephemeral: true });
 
         queue.push({ 
             userId: int.user.id, 
             userName: int.user.username, 
-            channelId: int.channel.id, 
-            status: 'ASK_NAME' 
+            channelId: int.channel.id
         });
         
         await int.reply({ content: '✅ Added to queue! Check your private thread.', ephemeral: true });
@@ -256,48 +273,49 @@ client.on('interactionCreate', async (int) => {
         return;
     }
 
-    if (!int.isButton() || !currentSession || int.user.id !== currentSession.userId) return;
+    const session = activeSessions.get(int.channelId);
+    if (!int.isButton() || !session || int.user.id !== session.userId) return;
     const thread = int.channel;
 
     if (int.customId === 'cancel_start') {
-        bot.chat(`/pay ${currentSession.mcName} ${currentSession.receivedAmount}`);
+        bot.chat(`/pay ${session.mcName} ${session.receivedAmount}`);
         await int.update({ content: 'Refunded.', components: [] });
-        return endSession(thread);
+        return endSession(thread.id);
     }
 
     if (int.customId === 'confirm_start') {
-        const totalMaxRisk = (currentSession.perGame * 2) * (1 - config.houseEdge) * currentSession.rounds;
+        const totalMaxRisk = (session.perGame * 2) * (1 - config.houseEdge) * session.rounds;
         if (botBalance < totalMaxRisk) {
-            bot.chat(`/pay ${currentSession.mcName} ${currentSession.receivedAmount}`);
+            bot.chat(`/pay ${session.mcName} ${session.receivedAmount}`);
             await int.update({ content: `❌ Insufficient bot balance ($${Math.floor(totalMaxRisk).toLocaleString()} needed).`, components: [] });
-            return endSession(thread);
+            return endSession(thread.id);
         }
 
-        if (currentSession.refund > 0) bot.chat(`/pay ${currentSession.mcName} ${currentSession.refund}`);
+        if (session.refund > 0) bot.chat(`/pay ${session.mcName} ${session.refund}`);
         await int.update({ content: '🎲 Rolling...', components: [] });
 
         let totalWon = 0;
-        for (let i = 1; i <= currentSession.rounds; i++) {
+        for (let i = 1; i <= session.rounds; i++) {
             const win = Math.random() < 0.5;
-            const res = new EmbedBuilder().setTitle(`Round ${i}/${currentSession.rounds}`);
+            const res = new EmbedBuilder().setTitle(`Round ${i}/${session.rounds}`);
             if (win) {
-                totalWon += (currentSession.perGame * 2) * (1 - config.houseEdge);
+                totalWon += (session.perGame * 2) * (1 - config.houseEdge);
                 res.setDescription('✨ **WIN**').setColor('#57F287');
             } else res.setDescription('💀 **LOSS**').setColor('#ED4245');
             const m = await thread.send({ embeds: [res] });
-            currentSession.messagesToDelete.push(m);
+            session.messagesToDelete.push(m);
             await new Promise(r => setTimeout(r, 1500));
         }
 
         if (totalWon > 0) {
             const finalWin = Math.floor(totalWon);
-            bot.chat(`/pay ${currentSession.mcName} ${finalWin}`);
-            bot.chat(`[CF] ${currentSession.mcName} won $${finalWin.toLocaleString()}!`);
+            bot.chat(`/pay ${session.mcName} ${finalWin}`);
+            bot.chat(`[CF] ${session.mcName} won $${finalWin.toLocaleString()}!`);
         } else {
-            bot.chat(`[CF] ${currentSession.mcName} lost. Try again!`);
+            bot.chat(`[CF] ${session.mcName} lost. Try again!`);
         }
 
-        currentSession.finalProfit = Math.floor(totalWon) - currentSession.receivedAmount;
+        session.finalProfit = Math.floor(totalWon) - session.receivedAmount;
         
         const vouchRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('vouch_named').setLabel('Vouch (Public)').setStyle(ButtonStyle.Primary),
@@ -313,27 +331,34 @@ client.on('interactionCreate', async (int) => {
             const vouchChannel = await client.channels.fetch(config.vouchChannelId);
             const vouchEmbed = new EmbedBuilder()
                 .setTitle('⭐ New Vouch!')
-                .setDescription(`${isAnon ? 'An Anonymous Player' : `<@${currentSession.userId}>`} just finished a game!`)
+                .setDescription(`${isAnon ? 'An Anonymous Player' : `<@${session.userId}>`} just finished a game!`)
                 .addFields(
-                    { name: 'Bet Amount', value: `$${currentSession.receivedAmount.toLocaleString()}`, inline: true },
-                    { name: 'Result', value: currentSession.finalProfit >= 0 ? `📈 +$${currentSession.finalProfit.toLocaleString()}` : `📉 -$${Math.abs(currentSession.finalProfit).toLocaleString()}`, inline: true }
+                    { name: 'Bet Amount', value: `$${session.receivedAmount.toLocaleString()}`, inline: true },
+                    { name: 'Result', value: session.finalProfit >= 0 ? `📈 +$${session.finalProfit.toLocaleString()}` : `📉 -$${Math.abs(session.finalProfit).toLocaleString()}`, inline: true }
                 )
                 .setTimestamp()
-                .setColor(currentSession.finalProfit >= 0 ? '#57F287' : '#ED4245');
+                .setColor(session.finalProfit >= 0 ? '#57F287' : '#ED4245');
             await vouchChannel.send({ embeds: [vouchEmbed] });
         }
         await int.update({ content: 'Processing...', components: [] });
-        endSession(thread);
+        endSession(thread.id);
     }
 });
 
-async function endSession(thread) {
-    for (const m of currentSession.messagesToDelete) {
+async function endSession(threadId) {
+    const session = activeSessions.get(threadId);
+    if (!session) return;
+    
+    for (const m of session.messagesToDelete) {
         try { await m.delete(); } catch(e) {}
     }
+    
     setTimeout(async () => {
-        try { await thread.delete(); } catch(e) {}
-        currentSession = null;
+        try { 
+            const thread = await client.channels.fetch(threadId);
+            await thread.delete(); 
+        } catch(e) {}
+        activeSessions.delete(threadId);
         updateStatus();
         processQueue();
     }, 5000);

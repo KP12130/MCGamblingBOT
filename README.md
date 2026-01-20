@@ -1,92 +1,107 @@
-🎰 DonutSMP Gambling & AFK Bot
+# 🎰 DonutSMP Gambling & AFK Bot
 
-A professional, high-performance Discord and Minecraft integration bot specifically designed for DonutSMP. This bot manages automated coinflip gambling sessions, tracks house liquidity, and features built-in AFK prevention with auto-broadcasting.
+A **professional, high-performance integration bot** designed specifically for **DonutSMP**.  
+The bot automates **coinflip gambling**, protects house liquidity, and ensures **24/7 uptime** with advanced AFK prevention and auto-reconnect logic.
 
-✨ Features
+---
 
-🎰 Automated Coinflip: Seamless 1v1 coinflip gambling through Discord private threads.
+## 🚀 Features
 
-💰 Liquidity Protection: Automatically checks if the bot has enough balance (/bal) to cover potential player winnings before starting a game.
+### 🎰 Automated Coinflip Gambling
+- Seamless **1v1 coinflip games**
+- Runs inside **private Discord threads**
+- Clean game flow with minimal manual input
 
-🛡️ AFK Protection: Built-in anti-AFK jumping mechanism to stay online 24/7.
+### 💰 Liquidity Protection
+- Automatically checks **house balance** using `/bal`
+- Prevents games when payout is not guaranteed
+- Protects against negative balance scenarios
 
-📢 Auto-Broadcast: Periodically sends customizable marketing messages in-game to attract players.
+### 🛡️ AFK Protection
+- Built-in **anti-AFK jumping**
+- Keeps the Minecraft account online **24/7**
 
-🔄 Auto-Reconnect: Robust reconnection logic that handles server restarts or kicks.
+### 📢 Auto-Broadcast System
+- Periodic in-game advertisements
+- Fully customizable message & interval
+- Helps attract new players automatically
 
-📊 Currency Support: Intelligent parser for Minecraft money formats (e.g., 10K, 5M, 2B).
+### 🔄 Auto-Reconnect
+- Handles:
+  - Server restarts
+  - Unexpected kicks
+  - Network disconnects
+- Zero-downtime design
 
-🚀 Cloud Ready: Optimized for hosting on Render.com with self-pinging to prevent sleeping.
+### 📊 Smart Currency Parser
+Supports common Minecraft money formats:
+- `10K`
+- `5M`
+- `2B`
+- `150000`
 
-🛠️ Installation
+### ☁️ Cloud-Optimized
+- Ready for **Render.com**
+- Built-in self-pinging to prevent sleeping
+- No manual keep-alive needed
 
-1. Prerequisites
+---
 
-Node.js (v18 or higher)
+## 🛠️ Installation & Setup
 
-A Minecraft account (Microsoft Auth)
+### 1️⃣ Prerequisites
+- **Node.js v18+**
+- **Minecraft account** (Microsoft Auth)
+- **Discord Bot Token**
+- Access to **DonutSMP**
 
-A Discord Bot Token
+---
 
-2. Setup
+### 2️⃣ Installation
 
-Clone this repository or download the source code:
+Clone the repository and install dependencies:
 
+git clone https://github.com/yourusername/donutsmp-gambling-bot.git
+cd donutsmp-gambling-bot
 npm install
+3️⃣ Environment Variables
+Configure the following environment variables
+(e.g. Render.com → Environment Settings):
 
-
-3. Environment Variables (ENV)
-
-Configure the following variables in your hosting environment (e.g., Render.com Dashboard):
-
-Key
-
-Description
-
-DISCORD_TOKEN
-
-Your Discord Bot Token from the Developer Portal.
-
-OWNER_ID
-
-Your personal Discord User ID for admin commands.
-
-MC_USERNAME
-
-Your Microsoft account email address.
-
-MC_HOST
-
-The server address (default: donutsmall.net).
-
-RENDER_EXTERNAL_URL
-
-Your Render.com app URL (for self-ping).
-
+Key	Description
+DISCORD_TOKEN	Your Discord bot token
+OWNER_ID	Your Discord user ID
+MC_USERNAME	Microsoft account email
+MC_HOST	Minecraft server address (default: donutsmall.net)
+RENDER_EXTERNAL_URL	Render app URL (used for self-pinging)
 🎮 Commands
-
-Discord Admin Commands
-
-!startbot - Connects the Minecraft bot to the server.
-
-!stopbot - Safely disconnects the bot and stops auto-reconnect.
-
-Discord User Commands
-
-!coinflip - Starts a new gambling session.
-
+👑 Admin Commands (Discord)
+Command	Description
+!startbot	Connects the bot to the Minecraft server
+!stopbot	Safely disconnects and disables auto-reconnect
+👤 User Commands (Discord)
+Command	Description
+!coinflip	Starts a new coinflip session in a private thread
 ⚙️ Configuration
+You can customize the bot behavior inside index.js:
 
-You can fine-tune the bot's behavior in the config object inside index.js:
+const config = {
+  houseEdge: 4, // House commission percentage
+  broadcastInterval: 5 * 60 * 1000, // 5 minutes
+  broadcastMessage: "🎰 Coinflip open! Type !coinflip on Discord to play!"
+};
+⚠️ Important Notice
+This project is for educational purposes only.
+Always comply with DonutSMP rules regarding:
 
-houseEdge: Adjust the house commission (default: 4%).
+Automated bots
 
-broadcastInterval: Change how often the bot advertises in-game.
+Gambling mechanics
 
-broadcastMessage: Customize your marketing pitch.
+AFK behavior
 
-📝 License
+You are responsible for how you deploy and use this software.
 
-This project is for educational purposes. Please ensure you comply with the server rules of DonutSMP when using automated bots.
-
-Built with ❤️ for the DonutSMP community.
+❤️ Credits
+Built with passion for the DonutSMP community.
+Designed for stability, automation, and clean integration.

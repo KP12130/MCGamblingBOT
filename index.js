@@ -36,14 +36,6 @@ const config = {
     broadcastMessage: "[COINFLIP] Double your money! 50/50 odds, only 4% fee! Type !coinflip on our Discord!"
 };
 
-const ignorePatterns = ['Chunk size', 'partial packet', 'player_info', 'displayName', 'sound_effect'];
-const originalWrite = process.stdout.write;
-process.stdout.write = function (chunk, encoding, callback) {
-    const str = chunk.toString();
-    if (ignorePatterns.some(pattern => str.includes(pattern))) return true;
-    return originalWrite.apply(process.stdout, arguments);
-};
-
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -61,11 +53,27 @@ const activeSessions = new Map();
 let reconnectTimeout;
 let broadcastTimer;
 
+async function logToDiscord(message, isError = false) {
+    try {
+        const logChannel = await client.channels.fetch(config.logChannelId);
+        if (logChannel) {
+            const embed = new EmbedBuilder()
+                .setTitle(isError ? '⚠️ System Error' : 'ℹ️ System Log')
+                .setDescription(message)
+                .setColor(isError ? '#ED4245' : '#5865F2')
+                .setTimestamp();
+            await logChannel.send({ embeds: [embed] });
+        }
+    } catch (err) {
+        console.error('[CRITICAL] Failed to send Discord log:', err.message);
+    }
+}
+
 function updateStatus() {
     if (!client.user) return;
     const activeCount = activeSessions.size + queue.length;
     client.user.setActivity({
-        name: `${activeCount} players active | DonutSMP`,
+        name: `${isBotRunning ? '🟢' : '🔴'} ${activeCount} players | DonutSMP`,
         type: ActivityType.Watching
     });
 }
@@ -97,11 +105,19 @@ function createMCBot() {
 
     bot.on('spawn', () => {
         isBotRunning = true;
+        logToDiscord('✅ **Minecraft Bot successfully connected!**');
         updateStatus();
         setTimeout(() => { if (bot?.chat) bot.chat('/bal'); }, 5000);
-        setInterval(() => { if (bot?.entity) { bot.setControlState('jump', true); setTimeout(() => bot.setControlState('jump', false), 500); } }, 30000);
+        setInterval(() => { 
+            if (bot?.entity) { 
+                bot.setControlState('jump', true); 
+                setTimeout(() => bot.setControlState('jump', false), 500); 
+            } 
+        }, 30000);
         if (config.broadcastEnabled) {
-            broadcastTimer = setInterval(() => { if (isBotRunning && bot?._client) bot.chat(config.broadcastMessage); }, config.broadcastInterval);
+            broadcastTimer = setInterval(() => { 
+                if (isBotRunning && bot?._client) bot.chat(config.broadcastMessage); 
+            }, config.broadcastInterval);
         }
     });
 
@@ -127,63 +143,62 @@ function createMCBot() {
         }
     });
 
-    bot.on('end', () => {
+    bot.on('error', (err) => {
+        logToDiscord(`❌ **Minecraft Bot error:** \`${err.message}\`\nReconnecting in 10s...`, true);
+    });
+
+    bot.on('end', (reason) => {
         isBotRunning = false;
-        if (!reconnectTimeout && !bot?._manualStop) reconnectTimeout = setTimeout(createMCBot, 10000);
+        updateStatus();
+        if (!bot?._manualStop) {
+            logToDiscord(`🔴 **Minecraft Bot disconnected!**\nReason: \`${reason}\`\nAttempting to reconnect...`);
+            clearTimeout(reconnectTimeout);
+            reconnectTimeout = setTimeout(createMCBot, 10000);
+        }
     });
 }
 
 async function processQueue() {
     updateStatus();
     if (queue.length === 0) return;
-    
     const sessionData = queue.shift();
     
     try {
         const channel = await client.channels.fetch(sessionData.channelId);
-        
-        // Próbáljuk meg nyilvános szálként, mert néha a privát szálak jogosultságai bugosak
         const thread = await channel.threads.create({
             name: `cf-${sessionData.userName}`,
-            type: ChannelType.GuildPublicThread, // Publikus szál, de csak az látja aki benne van ha a csatorna rejtett
+            type: ChannelType.GuildPublicThread,
             autoArchiveDuration: 60,
         });
+
+        // Töröljük a Discord automatikus "started a thread" üzenetét
+        setTimeout(async () => {
+            try {
+                const messages = await channel.messages.fetch({ limit: 5 });
+                const threadMsg = messages.find(m => m.type === 18 || (m.flags.has(32) && m.content.includes(thread.id)));
+                if (threadMsg) await threadMsg.delete();
+            } catch (e) {}
+        }, 1000);
 
         const session = {
             ...sessionData,
             threadId: thread.id,
-            messagesToDelete: [],
             status: 'ASK_NAME'
         };
 
         activeSessions.set(thread.id, session);
-        
-        // Felhasználó kényszerített hozzáadása
         await thread.members.add(session.userId).catch(console.error);
 
-        // Küldünk egy üzenetet, amiben megemlítjük, ez is segít a jogosultságban
-        const welcome = await thread.send({ 
-            content: `Üdvözöllek <@${session.userId}>!`, 
+        await thread.send({ 
+            content: `Welcome <@${session.userId}>!`, 
             embeds: [new EmbedBuilder()
-                .setTitle('🎰 Coinflip Játék')
-                .setDescription('Kérlek, írd be a pontos Minecraft nevedet!\n\n*Ha még mindig nem tudsz írni, ellenőrizd a csatorna jogosultságait (Send Messages in Threads).*')
+                .setTitle('🎰 Coinflip Game')
+                .setDescription('Please type your exact Minecraft username!')
                 .setColor('#5865F2')] 
         });
-        session.messagesToDelete.push(welcome);
-        
-        try {
-            const logChannel = await client.channels.fetch(config.logChannelId);
-            if (logChannel) {
-                await logChannel.send({
-                    content: `🔔 **Új Coinflip indult!**\nFelhasználó: <@${session.userId}> (${session.userName})\nSzál: <#${thread.id}>`
-                });
-            }
-        } catch (logErr) {
-            console.error('[HIBA] Log csatorna nem elérhető:', logErr.message);
-        }
         
     } catch (e) {
-        console.error('[HIBA] Szál létrehozása sikertelen:', e);
+        console.error('[ERROR] Failed to create thread:', e);
         processQueue();
     }
 }
@@ -192,23 +207,11 @@ client.on('messageCreate', async (msg) => {
     if (msg.author.bot) return;
 
     if (msg.author.id === config.ownerId) {
-        if (msg.content === '!startbot') { createMCBot(); return msg.reply('🚀 Bot indul...'); }
-        if (msg.content === '!stopbot') { if (bot) { bot._manualStop = true; bot.quit(); isBotRunning = false; return msg.reply('🛑 Bot leállítva.'); } }
-        
+        if (msg.content === '!startbot') { createMCBot(); return msg.reply('🚀 Starting bot...'); }
+        if (msg.content === '!stopbot') { if (bot) { bot._manualStop = true; bot.quit(); isBotRunning = false; return msg.reply('🛑 Bot stopped.'); } }
         if (msg.content === '!setup') {
-            const setupEmbed = new EmbedBuilder()
-                .setTitle('🎰 DonutSMP Coinflip')
-                .setDescription('Kattints az alábbi gombra egy új játék indításához!\n\n**Szabályok:**\n- 50/50 esély\n- 4% jutalék\n- 1-10 kör')
-                .setColor('#5865F2');
-            
-            const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                    .setCustomId('start_cf_queue')
-                    .setLabel('Játék indítása')
-                    .setEmoji('🎲')
-                    .setStyle(ButtonStyle.Primary)
-            );
-            
+            const setupEmbed = new EmbedBuilder().setTitle('🎰 DonutSMP Coinflip').setDescription('Click the button below to start a new game!').setColor('#5865F2');
+            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('start_cf_queue').setLabel('Start Game').setEmoji('🎲').setStyle(ButtonStyle.Primary));
             await msg.channel.send({ embeds: [setupEmbed], components: [row] });
             await msg.delete().catch(() => {});
             return;
@@ -217,17 +220,14 @@ client.on('messageCreate', async (msg) => {
 
     const session = activeSessions.get(msg.channel.id);
     if (session && msg.author.id === session.userId) {
-        session.messagesToDelete.push(msg);
-
         if (session.status === 'ASK_NAME') {
             session.mcName = msg.content.trim();
             session.status = 'WAITING_PAYMENT';
-            const m = await msg.reply({ embeds: [new EmbedBuilder().setTitle('Fizetés').setDescription(`Fizess a botnak a szerveren: \`/pay ${bot.username} <összeg>\`\nIGN: **${session.mcName}**`).setColor('#FEE75C')] });
-            session.messagesToDelete.push(m);
+            await msg.reply({ embeds: [new EmbedBuilder().setTitle('Payment').setDescription(`Pay the bot on the server: \`/pay ${bot.username} <amount>\`\nIGN: **${session.mcName}**`).setColor('#FEE75C')] });
         } 
         else if (session.status === 'ASK_ROUNDS') {
             const rounds = parseInt(msg.content);
-            if (isNaN(rounds) || rounds < 1 || rounds > 10) return msg.reply('Kérlek 1 és 10 közötti számot adj meg!');
+            if (isNaN(rounds) || rounds < 1 || rounds > 10) return msg.reply('Please provide a number between 1 and 10!');
             showConfirmation(msg.channel, rounds);
         }
     }
@@ -238,59 +238,36 @@ async function processPayment(threadId) {
     if (!session) return;
     const thread = await client.channels.fetch(threadId);
     session.status = 'ASK_ROUNDS';
-    const m = await thread.send({ embeds: [new EmbedBuilder().setTitle('💰 Befizetés érkezett!').setDescription(`Összeg: **$${session.receivedAmount.toLocaleString()}**\nHány kör legyen? (1-10)`).setColor('#57F287')] });
-    session.messagesToDelete.push(m);
+    await thread.send({ embeds: [new EmbedBuilder().setTitle('💰 Payment Received!').setDescription(`Amount: **$${session.receivedAmount.toLocaleString()}**\nHow many rounds? (1-10)`).setColor('#57F287')] });
 }
 
 async function showConfirmation(thread, rounds) {
     const session = activeSessions.get(thread.id);
     if (!session) return;
-    let perGame = Math.floor(session.receivedAmount / rounds);
-    session.perGame = perGame;
+    session.perGame = Math.floor(session.receivedAmount / rounds);
     session.rounds = rounds;
-    session.refund = session.receivedAmount - (perGame * rounds);
+    session.refund = session.receivedAmount - (session.perGame * rounds);
     bot.chat('/bal');
 
-    const embed = new EmbedBuilder().setTitle('📊 Játék részletei').addFields(
-        { name: 'Tét/Kör', value: `$${perGame.toLocaleString()}`, inline: true },
-        { name: 'Körök', value: `${rounds}`, inline: true }
+    const embed = new EmbedBuilder().setTitle('📊 Game Details').addFields(
+        { name: 'Bet/Round', value: `$${session.perGame.toLocaleString()}`, inline: true },
+        { name: 'Rounds', value: `${rounds}`, inline: true }
     ).setColor('#E67E22');
 
     const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('confirm_start').setLabel('Játék indítása').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId('cancel_start').setLabel('Visszautalás').setStyle(ButtonStyle.Danger)
+        new ButtonBuilder().setCustomId('confirm_start').setLabel('Confirm Start').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('cancel_start').setLabel('Refund').setStyle(ButtonStyle.Danger)
     );
-    const m = await thread.send({ embeds: [embed], components: [row] });
-    session.messagesToDelete.push(m);
+    await thread.send({ embeds: [embed], components: [row] });
 }
 
 client.on('interactionCreate', async (int) => {
     if (int.isButton() && int.customId === 'start_cf_queue') {
-        if (!isBotRunning) return int.reply({ content: '❌ A bot jelenleg nem elérhető.', ephemeral: true });
-        
-        for (const [threadId, session] of activeSessions.entries()) {
-            if (session.userId === int.user.id) {
-                try {
-                    const existingThread = await client.channels.fetch(threadId);
-                    if (existingThread) {
-                        return int.reply({ content: '❌ Már van egy futó munkameneted! Nézd meg a szálaidat.', ephemeral: true });
-                    }
-                } catch (e) {
-                    activeSessions.delete(threadId);
-                }
-            }
-        }
-
+        if (!isBotRunning) return int.reply({ content: '❌ Bot is currently offline.', ephemeral: true });
         const inQueue = queue.some(q => q.userId === int.user.id);
-        if (inQueue) return int.reply({ content: '❌ Már benne vagy a várólistában!', ephemeral: true });
-
-        queue.push({ 
-            userId: int.user.id, 
-            userName: int.user.username, 
-            channelId: int.channel.id
-        });
-        
-        await int.reply({ content: '✅ Hozzáadva a várólistához! Nézd meg a létrehozott szálat.', ephemeral: true });
+        if (inQueue) return int.reply({ content: '❌ Already in queue!', ephemeral: true });
+        queue.push({ userId: int.user.id, userName: int.user.username, channelId: int.channel.id });
+        await int.reply({ content: '✅ Added to queue!', ephemeral: true });
         processQueue();
         return;
     }
@@ -301,7 +278,6 @@ client.on('interactionCreate', async (int) => {
 
     if (int.customId === 'cancel_start') {
         bot.chat(`/pay ${session.mcName} ${session.receivedAmount}`);
-        await int.update({ content: 'Visszautalva.', components: [] });
         return endSession(thread.id);
     }
 
@@ -309,42 +285,38 @@ client.on('interactionCreate', async (int) => {
         const totalMaxRisk = (session.perGame * 2) * (1 - config.houseEdge) * session.rounds;
         if (botBalance < totalMaxRisk) {
             bot.chat(`/pay ${session.mcName} ${session.receivedAmount}`);
-            await int.update({ content: `❌ Nincs elég egyenlege a botnak ($${Math.floor(totalMaxRisk).toLocaleString()} kellene).`, components: [] });
             return endSession(thread.id);
         }
 
         if (session.refund > 0) bot.chat(`/pay ${session.mcName} ${session.refund}`);
-        await int.update({ content: '🎲 Pörgetés...', components: [] });
+        await int.update({ content: '🎲 Rolling...', components: [] });
 
         let totalWon = 0;
         for (let i = 1; i <= session.rounds; i++) {
             const win = Math.random() < 0.5;
-            const res = new EmbedBuilder().setTitle(`Kör ${i}/${session.rounds}`);
+            const res = new EmbedBuilder().setTitle(`Round ${i}/${session.rounds}`);
             if (win) {
                 totalWon += (session.perGame * 2) * (1 - config.houseEdge);
-                res.setDescription('✨ **NYERTÉL**').setColor('#57F287');
-            } else res.setDescription('💀 **VESZTETTÉL**').setColor('#ED4245');
-            const m = await thread.send({ embeds: [res] });
-            session.messagesToDelete.push(m);
-            await new Promise(r => setTimeout(r, 1500));
+                res.setDescription('✨ **WON**').setColor('#57F287');
+            } else res.setDescription('💀 **LOST**').setColor('#ED4245');
+            await thread.send({ embeds: [res] });
+            await new Promise(r => setTimeout(r, 1200));
         }
 
         if (totalWon > 0) {
             const finalWin = Math.floor(totalWon);
             bot.chat(`/pay ${session.mcName} ${finalWin}`);
-            bot.chat(`[CF] ${session.mcName} nyert $${finalWin.toLocaleString()}-t!`);
-        } else {
-            bot.chat(`[CF] ${session.mcName} vesztett. Próbáld újra!`);
-        }
+            bot.chat(`[CF] ${session.mcName} won $${finalWin.toLocaleString()}!`);
+        } else bot.chat(`[CF] ${session.mcName} lost. Try again!`);
 
         session.finalProfit = Math.floor(totalWon) - session.receivedAmount;
         
         const vouchRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('vouch_named').setLabel('Vouch (Publikus)').setStyle(ButtonStyle.Primary),
-            new ButtonBuilder().setCustomId('vouch_anon').setLabel('Vouch (Anonim)').setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder().setCustomId('no_vouch').setLabel('Köszönöm, nem').setStyle(ButtonStyle.Danger)
+            new ButtonBuilder().setCustomId('vouch_named').setLabel('Vouch (Public)').setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId('vouch_anon').setLabel('Vouch (Anon)').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('no_vouch').setLabel('No thanks').setStyle(ButtonStyle.Danger)
         );
-        await thread.send({ content: `🏆 Játék vége! Nyeremény: **$${Math.floor(totalWon).toLocaleString()}**. Szeretnél vouch-ot küldeni?`, components: [vouchRow] });
+        await thread.send({ content: `🏆 Game finished! Win: **$${Math.floor(totalWon).toLocaleString()}**. Leave a vouch?`, components: [vouchRow] });
     }
 
     if (int.customId.startsWith('vouch_') || int.customId === 'no_vouch') {
@@ -352,39 +324,34 @@ client.on('interactionCreate', async (int) => {
             const isAnon = int.customId === 'vouch_anon';
             const vouchChannel = await client.channels.fetch(config.vouchChannelId);
             const vouchEmbed = new EmbedBuilder()
-                .setTitle('⭐ Új Vouch!')
-                .setDescription(`${isAnon ? 'Egy anonim játékos' : `<@${session.userId}>`} épp befejezett egy játékot!`)
+                .setTitle('⭐ New Vouch!')
+                .setDescription(`${isAnon ? 'An anonymous player' : `<@${session.userId}>`} just finished a game!`)
                 .addFields(
-                    { name: 'Tét', value: `$${session.receivedAmount.toLocaleString()}`, inline: true },
-                    { name: 'Eredmény', value: session.finalProfit >= 0 ? `📈 +$${session.finalProfit.toLocaleString()}` : `📉 -$${Math.abs(session.finalProfit).toLocaleString()}`, inline: true }
+                    { name: 'Bet', value: `$${session.receivedAmount.toLocaleString()}`, inline: true },
+                    { name: 'Profit', value: session.finalProfit >= 0 ? `📈 +$${session.finalProfit.toLocaleString()}` : `📉 -$${Math.abs(session.finalProfit).toLocaleString()}`, inline: true }
                 )
                 .setTimestamp()
                 .setColor(session.finalProfit >= 0 ? '#57F287' : '#ED4245');
             await vouchChannel.send({ embeds: [vouchEmbed] });
         }
-        await int.update({ content: 'Feldolgozás...', components: [] });
         endSession(thread.id);
     }
 });
 
 async function endSession(threadId) {
-    const session = activeSessions.get(threadId);
-    if (!session) return;
-    
-    for (const m of session.messagesToDelete) {
-        try { await m.delete(); } catch(e) {}
-    }
-    
-    setTimeout(async () => {
-        try { 
-            const thread = await client.channels.fetch(threadId);
-            if (thread) await thread.delete(); 
-        } catch(e) {}
-        activeSessions.delete(threadId);
-        updateStatus();
-        processQueue();
-    }, 5000);
+    try { 
+        const thread = await client.channels.fetch(threadId);
+        if (thread) await thread.delete(); 
+    } catch(e) {}
+    activeSessions.delete(threadId);
+    updateStatus();
+    processQueue();
 }
 
-client.on('ready', () => { createMCBot(); updateStatus(); });
+client.on('ready', () => { 
+    logToDiscord('🚀 **Bot is online and ready!**');
+    createMCBot(); 
+    updateStatus(); 
+});
+
 client.login(config.token);

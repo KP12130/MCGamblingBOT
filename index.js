@@ -13,6 +13,16 @@ if (process.env.RENDER_EXTERNAL_URL) {
     setInterval(() => { axios.get(process.env.RENDER_EXTERNAL_URL).catch(() => {}); }, 14 * 60 * 1000);
 }
 
+// --- GLOBAL ERROR HANDLING (CRITICAL FOR ECONNRESET) ---
+process.on('uncaughtException', (err) => {
+    console.error('[CRITICAL] Uncaught Exception:', err);
+    // Prevents the process from crashing on ECONNRESET or similar network errors
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[CRITICAL] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 // --- CONFIGURATION ---
 const config = {
     ownerId: process.env.OWNER_ID || 'YOUR_DISCORD_ID', 
@@ -222,8 +232,10 @@ function createMCBot() {
     });
 
     bot.on('error', (err) => {
-        if (err.message.includes('Partial packet')) return;
-        console.error('Bot Error:', err);
+        console.error('Mineflayer Error:', err.code || err);
+        if (err.code === 'ECONNRESET') {
+            logToDiscord('🔌 Hálózati hiba (ECONNRESET). Újracsatlakozás...');
+        }
     });
 
     bot.on('end', () => {
